@@ -200,7 +200,7 @@ class _TripInfoScreenState extends ConsumerState<TripInfoScreen> {
   Widget _buildLocationCard(Trip trip) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -223,7 +223,7 @@ class _TripInfoScreenState extends ConsumerState<TripInfoScreen> {
                   size: 20,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -235,9 +235,10 @@ class _TripInfoScreenState extends ConsumerState<TripInfoScreen> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    const SizedBox(height: 4),
                     Text(
                       trip.pickupLocation,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: AppTextStyles.body1.copyWith(
                         color: Colors.black87,
                       ),
@@ -281,6 +282,8 @@ class _TripInfoScreenState extends ConsumerState<TripInfoScreen> {
                     const SizedBox(height: 4),
                     Text(
                       trip.destination,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: AppTextStyles.body1.copyWith(
                         color: Colors.black87,
                       ),

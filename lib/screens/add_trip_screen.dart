@@ -268,8 +268,8 @@ class _AddTripScreenState extends ConsumerState<AddTripScreen> {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Color(0xFFFE8C6F),
-            Color(0xFFFF6B81),
+             Color(0xFFEE4B8E), // Pink color
+            Color(0xFFEF7154), 
           ],
         ),
       ),

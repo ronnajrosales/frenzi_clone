@@ -105,6 +105,7 @@ flutter:
   assets:
     - assets/
     - assets/images/
+    - assets/data/sample_trips.json
 
   fonts:
     - family: Poppins
