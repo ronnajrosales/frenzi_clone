@@ -1,34 +1,51 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/database/database.dart';
 import '../data/repositories/trip_repository.dart';
 import 'home_screen.dart';
 
-class LoginScreen extends StatefulWidget {
+class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
   void _handleLogin() {
-    // if (_formKey.currentState!.validate()) {
-      final database = AppDatabase.getInstance();
-      final tripRepository = TripRepository(database);
-
+    if (_emailController.text == 'admin' && _passwordController.text == 'admin') {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => HomeScreen(
-            tripRepository: tripRepository,
-          ),
+          builder: (context) => const HomeScreen(),
         ),
       );
-    // }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Invalid email or password')),
+      );
+    }
+  }
+
+  bool _isFormValid = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Add listeners to both controllers
+    _emailController.addListener(_validateForm);
+    _passwordController.addListener(_validateForm);
+  }
+
+  void _validateForm() {
+    setState(() {
+      _isFormValid = _emailController.text.isNotEmpty && 
+                     _passwordController.text.isNotEmpty;
+    });
   }
 
   @override
@@ -49,6 +66,7 @@ class _LoginScreenState extends State<LoginScreen> {
             colors: [
               Color(0xFFEE4B8E), // Pink color
               Color(0xFFEF7154), // Orange color
+              
             ],
           ),
         ),
@@ -94,7 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             color: Colors.grey[400],
                           ),
                           filled: true,
-                          fillColor: Colors.grey[50],
+                          fillColor: Color(0xFFDADDE1),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
                             borderSide: BorderSide.none,
@@ -120,7 +138,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             color: Colors.grey[400],
                           ),
                           filled: true,
-                          fillColor: Colors.grey[50],
+                          fillColor: Color(0xFFDADDE1),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
                             borderSide: BorderSide.none,
@@ -128,25 +146,28 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       const SizedBox(height: 32),
-                      SizedBox(
-                        width: double.infinity,
+                      Center(
+                      child: SizedBox(
+                        width: 200,
                         child: ElevatedButton(
                           onPressed: _handleLogin,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF1A237E),
-                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
                             ),
                           ),
-                          child: const Text(
+                          child: Text(
                             'LOGIN',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
+                              color: _isFormValid ? Colors.white : Colors.grey,
                             ),
                           ),
                         ),
+                      ),
                       ),
                       const SizedBox(height: 24),
                       Row(
@@ -175,7 +196,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ),
                           ),
-                         
+
                         ],
                       ),
                       const SizedBox(height: 24),

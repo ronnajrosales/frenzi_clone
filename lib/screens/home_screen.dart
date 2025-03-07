@@ -1,20 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../providers/providers.dart';
 import '../data/database/database.dart';
 import '../data/repositories/trip_repository.dart';
 import 'add_trip_screen.dart';
 import 'trip_info_screen.dart';
 import 'previous_trips_screen.dart';
+import '../utils/text_styles.dart';
 
-class HomeScreen extends StatefulWidget {
-  final TripRepository tripRepository;
-
-  const HomeScreen({super.key, required this.tripRepository});
+class HomeScreen extends ConsumerStatefulWidget {
+  const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen> {
   void _startNewTrip() {
     // TODO: Implement trip functionality
     showDialog(
@@ -60,19 +61,24 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => PreviousTripsScreen(
-        tripRepository: widget.tripRepository,
+
       )),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final tripRepository = ref.watch(tripRepositoryProvider);
+    
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFFFF8A80), Color(0xFFFF5252)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFFEE4B8E), // Pink color
+            Color(0xFFEF7154), // Orange color
+          ],
         ),
       ),
       child: Scaffold(
@@ -83,35 +89,33 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               // Welcome section
               Padding(
-                padding: const EdgeInsets.all(16.0),
+                padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 32.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    const SizedBox(height: 20),
+                    Text(
                       'Welcome back!',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
+                      style: AppTextStyles.heading1.copyWith(
                         color: Colors.white,
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 16),
                     Text(
                       'Your trips are waiting',
-                      style: TextStyle(
-                        fontSize: 16,
+                      style: AppTextStyles.body1.copyWith(
                         color: Colors.white.withOpacity(0.8),
                       ),
                     ),
                   ],
                 ),
               ),
-
+              const SizedBox(height: 50),
               // Total Rides Card
               Center(
                 child: Container(
                   width: 200,
-                  margin: const EdgeInsets.symmetric(vertical: 16),
+                  margin: const EdgeInsets.symmetric(vertical: 16, horizontal: 30),
                   child: Material(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
@@ -121,7 +125,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           context,
                           MaterialPageRoute(
                             builder: (context) => PreviousTripsScreen(
-                              tripRepository: widget.tripRepository,
                             ),
                           ),
                         );
@@ -130,7 +133,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: Padding(
                         padding: const EdgeInsets.all(16.0),
                         child: StreamBuilder<List<Trip>>(
-                          stream: widget.tripRepository.watchAllTrips(),
+                          stream: tripRepository.watchAllTrips(),
                           builder: (context, snapshot) {
                             final tripCount = snapshot.data?.length ?? 0;
                             return Column(
@@ -169,57 +172,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              // Trips List
-              Expanded(
-                child: Container(
-                  margin: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: StreamBuilder<List<Trip>>(
-                    stream: widget.tripRepository.watchAllTrips(),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
-
-                      if (snapshot.hasError) {
-                        return Center(
-                          child: Text(
-                            'Error: ${snapshot.error}',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                        );
-                      }
-
-                      final trips = snapshot.data ?? [];
-
-                      if (trips.isEmpty) {
-                        return Center(
-                          child: Text(
-                            'No trips yet',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.8),
-                              fontSize: 16,
-                            ),
-                          ),
-                        );
-                      }
-
-                      return ListView.builder(
-                        padding: const EdgeInsets.all(8),
-                        itemCount: trips.length,
-                        itemBuilder: (context, index) {
-                          final trip = trips[index];
-                          return _buildTripCard(trip);
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ),
-
               // Start New Trip Button
               Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -230,9 +182,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => AddTripScreen(
-                            tripRepository: widget.tripRepository,
-                          ),
+                          builder: (context) => const AddTripScreen(),
                         ),
                       );
                     },
@@ -274,7 +224,6 @@ class _HomeScreenState extends State<HomeScreen> {
             context,
             MaterialPageRoute(
               builder: (context) => TripInfoScreen(
-                tripRepository: widget.tripRepository,
                 tripId: trip.id,
               ),
             ),

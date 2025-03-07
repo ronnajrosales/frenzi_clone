@@ -100,6 +100,8 @@ class AppDatabase extends _$AppDatabase {
   //   // For now, return all trips - implement proper distance filtering if needed
   //   return getAllTrips();
   // }
+
+
 }
 
 LazyDatabase _openConnection() {

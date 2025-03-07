@@ -1,36 +1,47 @@
 import 'package:flutter/material.dart';
 import 'dart:math';
 import '../data/repositories/trip_repository.dart';
+import 'package:google_places_flutter/google_places_flutter.dart';
+import 'package:google_places_flutter/model/prediction.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../providers/providers.dart';
+import '../utils/text_styles.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'dart:async';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
-class AddTripScreen extends StatefulWidget {
-  final TripRepository tripRepository;
+import '../widgets/custom_back_button.dart';
 
-  const AddTripScreen({super.key, required this.tripRepository});
+
+class AddTripScreen extends ConsumerStatefulWidget {
+  const AddTripScreen({super.key});
 
   @override
-  State<AddTripScreen> createState() => _AddTripScreenState();
+  ConsumerState<AddTripScreen> createState() => _AddTripScreenState();
 }
 
-class _AddTripScreenState extends State<AddTripScreen> {
+class _AddTripScreenState extends ConsumerState<AddTripScreen> {
   final TextEditingController _pickupController = TextEditingController();
   final TextEditingController _destinationController = TextEditingController();
-  
-  // Add location coordinates
+  DateTime _selectedDate = DateTime.now();
+  TimeOfDay _selectedTime = TimeOfDay.now();
+  int _passengerCount = 1;
   double _pickupLatitude = 0.0;
   double _pickupLongitude = 0.0;
   double _destinationLatitude = 0.0;
   double _destinationLongitude = 0.0;
-
-  DateTime _selectedDate = DateTime.now();
-  TimeOfDay _selectedTime = TimeOfDay.now();
-  int _passengers = 1;
-  double _fare = 0.0;
+  GoogleMapController? _mapController;
+  final Set<Marker> _markers = {};
+  final Set<Polyline> _polylines = {};
+  List<LatLng> _polylineCoordinates = [];
+  String _distance = '';
+  String _duration = '';
 
   @override
-  void dispose() {
-    _pickupController.dispose();
-    _destinationController.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    // No need to set default location anymore
   }
 
   Future<void> _selectDate(BuildContext context) async {
@@ -59,30 +70,19 @@ class _AddTripScreenState extends State<AddTripScreen> {
     }
   }
 
-  // Add method to calculate fare based on distance
-  double _calculateFare(double pickupLat, double pickupLng, 
-                       double destLat, double destLng) {
-    // This is a simple example - you should implement your own fare calculation logic
-    const baseRate = 50.0; // Base fare
-    const ratePerKm = 15.0; // Rate per kilometer
-    
-    // Calculate distance using Haversine formula
-    final distance = calculateDistance(pickupLat, pickupLng, destLat, destLng);
-    
-    return baseRate + (distance * ratePerKm);
-  }
-
   Future<void> _bookTrip() async {
-    try {
-      // Calculate fare based on locations
-      _fare = _calculateFare(
-        _pickupLatitude,
-        _pickupLongitude,
-        _destinationLatitude,
-        _destinationLongitude,
+    if (_pickupController.text.isEmpty || _destinationController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter pickup and destination locations')),
       );
+      return;
+    }
 
-      await widget.tripRepository.addTrip(
+    try {
+      final tripRepository = ref.read(tripRepositoryProvider);
+      final fare = 50.0 + (_passengerCount * 10.0);
+
+      await tripRepository.addTrip(
         pickupLocation: _pickupController.text,
         pickupLatitude: _pickupLatitude,
         pickupLongitude: _pickupLongitude,
@@ -91,15 +91,13 @@ class _AddTripScreenState extends State<AddTripScreen> {
         destinationLongitude: _destinationLongitude,
         tripDate: _selectedDate,
         tripTime: _selectedTime.format(context),
-        passengerCount: _passengers,
-        fare: _fare,
+        passengerCount: _passengerCount,
+        fare: fare,
       );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Trip booked successfully! Fare: ₱${_fare.toStringAsFixed(2)}'),
-          ),
+          const SnackBar(content: Text('Trip booked successfully!')),
         );
         Navigator.pop(context);
       }
@@ -112,39 +110,172 @@ class _AddTripScreenState extends State<AddTripScreen> {
     }
   }
 
-  // Helper method to calculate distance between two points
-  double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
-    // Implement the Haversine formula to calculate distance between coordinates
-    // This is a simplified version - you should implement proper distance calculation
-    const R = 6371.0; // Earth's radius in kilometers
-    final dLat = _toRadians(lat2 - lat1);
-    final dLon = _toRadians(lon2 - lon1);
-    final a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(_toRadians(lat1)) * cos(_toRadians(lat2)) *
-        sin(dLon / 2) * sin(dLon / 2);
-    final c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    return R * c;
+  Future<void> _getRouteAndDrawPolyline() async {
+    if (_pickupLatitude == 0.0 || _destinationLatitude == 0.0) return;
+
+    try {
+      final String url = 
+        'https://maps.googleapis.com/maps/api/directions/json'
+        '?origin=$_pickupLatitude,$_pickupLongitude'
+        '&destination=$_destinationLatitude,$_destinationLongitude'
+        '&mode=driving'
+        '&key=AIzaSyAlm9aA_rmQ2Wz5TEh9AtBY_5E3M3w5lkY';
+
+      final response = await http.get(Uri.parse(url));
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        if (data['status'] == 'OK') {
+          // Get route points
+          final points = data['routes'][0]['overview_polyline']['points'];
+          
+          // Get distance and duration
+          _distance = data['routes'][0]['legs'][0]['distance']['text'];
+          _duration = data['routes'][0]['legs'][0]['duration']['text'];
+
+          // Decode polyline points
+          _polylineCoordinates = _decodePolyline(points);
+
+          setState(() {
+            _polylines.clear();
+            _polylines.add(
+              Polyline(
+                polylineId: const PolylineId('route'),
+                color: const Color(0xFF1A237E),
+                points: _polylineCoordinates,
+                width: 4,
+              ),
+            );
+          });
+
+          // Update camera to show entire route
+          if (_mapController != null && _polylineCoordinates.isNotEmpty) {
+            LatLngBounds bounds = _getBoundsForPolyline(_polylineCoordinates);
+            await _mapController!.animateCamera(
+              CameraUpdate.newLatLngBounds(bounds, 50),
+            );
+          }
+        } else {
+          print('Directions API error: ${data['status']}');
+        }
+      }
+    } catch (e) {
+      print('Error fetching route: $e');
+    }
   }
 
-  double _toRadians(double degree) {
-    return degree * pi / 180;
+  List<LatLng> _decodePolyline(String encoded) {
+    List<LatLng> points = [];
+    int index = 0, len = encoded.length;
+    int lat = 0, lng = 0;
+
+    while (index < len) {
+      int b, shift = 0, result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1F) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1F) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+
+      points.add(LatLng((lat / 1E5).toDouble(), (lng / 1E5).toDouble()));
+    }
+    return points;
+  }
+
+  LatLngBounds _getBoundsForPolyline(List<LatLng> points) {
+    double? minLat, maxLat, minLng, maxLng;
+
+    for (LatLng point in points) {
+      if (minLat == null || point.latitude < minLat) {
+        minLat = point.latitude;
+      }
+      if (maxLat == null || point.latitude > maxLat) {
+        maxLat = point.latitude;
+      }
+      if (minLng == null || point.longitude < minLng) {
+        minLng = point.longitude;
+      }
+      if (maxLng == null || point.longitude > maxLng) {
+        maxLng = point.longitude;
+      }
+    }
+
+    return LatLngBounds(
+      southwest: LatLng(minLat! - 0.01, minLng! - 0.01),
+      northeast: LatLng(maxLat! + 0.01, maxLng! + 0.01),
+    );
+  }
+
+  void _updateMapMarkers() async {
+    setState(() {
+      _markers.clear();
+      
+      // Add pickup marker
+      if (_pickupLatitude != 0.0 && _pickupLongitude != 0.0) {
+        _markers.add(
+          Marker(
+            markerId: const MarkerId('pickup'),
+            position: LatLng(_pickupLatitude, _pickupLongitude),
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+            infoWindow: InfoWindow(title: 'Pickup', snippet: _pickupController.text),
+          ),
+        );
+      }
+
+      // Add destination marker
+      if (_destinationLatitude != 0.0 && _destinationLongitude != 0.0) {
+        _markers.add(
+          Marker(
+            markerId: const MarkerId('destination'),
+            position: LatLng(_destinationLatitude, _destinationLongitude),
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+            infoWindow: InfoWindow(title: 'Destination', snippet: _destinationController.text),
+          ),
+        );
+      }
+    });
+
+    // Get and draw route if both markers are set
+    if (_markers.length == 2) {
+      await _getRouteAndDrawPolyline();
+    } else {
+      setState(() {
+        _polylines.clear();
+        _distance = '';
+        _duration = '';
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFFEE4B8E), // Pink color
-              Color(0xFFEF7154), // Orange color
-            ],
-          ),
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFFFE8C6F),
+            Color(0xFFFF6B81),
+          ],
         ),
-        child: SafeArea(
+      ),
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -154,26 +285,30 @@ class _AddTripScreenState extends State<AddTripScreen> {
                   padding: const EdgeInsets.all(16.0),
                   child: Row(
                     children: [
-                      IconButton(
-                        icon: const Icon(Icons.arrow_back, color: Colors.white),
-                        onPressed: () => Navigator.pop(context),
-                        padding: EdgeInsets.zero,
-                      ),
+                      CustomBackButton(),
                       const SizedBox(width: 8),
-                      const Text(
-                        'New Trip',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
+              
                     ],
                   ),
                 ),
-                // Location details card
+
+                 Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: 
+                  
+                      const Text(
+                        'New Trip',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                 ),
+
+                // Location Card
                 Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 16),
+                  margin: const EdgeInsets.all(16),
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: Colors.white,
@@ -186,7 +321,7 @@ class _AddTripScreenState extends State<AddTripScreen> {
                         icon: Icons.radio_button_checked,
                         title: 'PICKUP',
                         hint: 'Enter pickup location',
-                        color: const Color(0xFF1A237E),
+                        isPickup: true,
                       ),
                       const SizedBox(height: 16),
                       _buildLocationField(
@@ -194,13 +329,13 @@ class _AddTripScreenState extends State<AddTripScreen> {
                         icon: Icons.place,
                         title: 'DESTINATION',
                         hint: 'Enter destination',
-                        color: const Color(0xFF1A237E),
+                        isPickup: false,
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                // Map placeholder
+
+                // Map Placeholder
                 Container(
                   height: 200,
                   margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -210,24 +345,70 @@ class _AddTripScreenState extends State<AddTripScreen> {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: const ColoredBox(
-                      color: Color(0xFFE0E0E0),
-                      child: Center(
-                        child: Text(
-                          'Map View',
-                          style: TextStyle(
-                            color: Colors.black54,
-                            fontSize: 16,
+                    child: Stack(
+                      children: [
+                        GoogleMap(
+                          initialCameraPosition: const CameraPosition(
+                            target: LatLng(51.5074, -0.1278), // London coordinates
+                            zoom: 12,
                           ),
+                          markers: _markers,
+                          polylines: _polylines,
+                          onMapCreated: (controller) {
+                            _mapController = controller;
+                            if (_markers.isNotEmpty) {
+                              _updateMapMarkers();
+                            }
+                          },
+                          myLocationEnabled: true,
+                          myLocationButtonEnabled: false,
+                          zoomControlsEnabled: false,
+                          mapToolbarEnabled: false,
                         ),
-                      ),
+                        if (_distance.isNotEmpty && _duration.isNotEmpty)
+                          Positioned(
+                            bottom: 16,
+                            left: 16,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.1),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.directions_car, size: 18, color: Color(0xFF1A237E)),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    '$_distance • $_duration',
+                                    style: const TextStyle(
+                                      fontFamily: 'Poppins',
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
+
                 const SizedBox(height: 16),
-                // Trip details card
+
+                // Trip Details Card
                 Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 16),
+                  margin: const EdgeInsets.all(16),
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.2),
@@ -235,75 +416,28 @@ class _AddTripScreenState extends State<AddTripScreen> {
                   ),
                   child: Column(
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                          GestureDetector(
-                            onTap: () => _selectDate(context),
-                            child: _buildTripDetail(
-                              icon: Icons.calendar_today,
-                              value: '${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}',
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: () => _selectTime(context),
-                            child: _buildTripDetail(
-                              icon: Icons.access_time,
-                              value: _selectedTime.format(context),
-                            ),
-                          ),
-                          Column(
-                            children: [
-                              const Icon(
-                                Icons.people,
-                                color: Colors.white,
-                                size: 24,
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  IconButton(
-                                    onPressed: () {
-                                      if (_passengers > 1) {
-                                        setState(() => _passengers--);
-                                      }
-                                    },
-                                    icon: const Icon(
-                                      Icons.remove_circle_outline,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                  Text(
-                                    _passengers.toString(),
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    onPressed: () {
-                                      setState(() => _passengers++);
-                                    },
-                                    icon: const Icon(
-                                      Icons.add_circle_outline,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ],
+                      _buildDetailItem(
+                        icon: Icons.calendar_today,
+                        title: 'Date',
+                        value: '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}',
+                        onTap: () => _selectDate(context),
                       ),
+                      const SizedBox(height: 16),
+                      _buildDetailItem(
+                        icon: Icons.access_time,
+                        title: 'Time',
+                        value: _selectedTime.format(context),
+                        onTap: () => _selectTime(context),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildPassengerCount(),
                     ],
                   ),
                 ),
-                const SizedBox(height: 24),
-                // Book button
+
+                // Book Button
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.all(16.0),
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
@@ -315,13 +449,11 @@ class _AddTripScreenState extends State<AddTripScreen> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
+                        elevation: 2,
                       ),
                       child: const Text(
                         'BOOK TRIP',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: AppTextStyles.button,
                       ),
                     ),
                   ),
@@ -336,68 +468,132 @@ class _AddTripScreenState extends State<AddTripScreen> {
 
   Widget _buildLocationField({
     required TextEditingController controller,
+    required IconData icon,
     required String title,
     required String hint,
-    required IconData icon,
-    required Color color,
+    required bool isPickup,
   }) {
+    return GooglePlaceAutoCompleteTextField(
+      textEditingController: controller,
+      googleAPIKey: "AIzaSyAlm9aA_rmQ2Wz5TEh9AtBY_5E3M3w5lkY",
+      inputDecoration: InputDecoration(
+        prefixIcon: Icon(icon, color: const Color(0xFF1A237E)),
+        labelText: title,
+        labelStyle: AppTextStyles.caption.copyWith(
+          color: Colors.grey[600],
+          fontWeight: FontWeight.bold,
+        ),
+        hintText: hint,
+        hintStyle: AppTextStyles.body2.copyWith(color: Colors.grey),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: Colors.grey[300]!),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: Color(0xFF1A237E)),
+        ),
+      ),
+      debounceTime: 800,
+      countries: const ["uk"],
+      isLatLngRequired: true,
+      getPlaceDetailWithLatLng: (Prediction prediction) {
+        setState(() {
+          if (isPickup) {
+            _pickupLatitude = double.parse(prediction.lat ?? "0");
+            _pickupLongitude = double.parse(prediction.lng ?? "0");
+          } else {
+            _destinationLatitude = double.parse(prediction.lat ?? "0");
+            _destinationLongitude = double.parse(prediction.lng ?? "0");
+          }
+        });
+        _updateMapMarkers();
+      },
+      itemClick: (Prediction prediction) {
+        controller.text = prediction.description ?? "";
+      },
+    );
+  }
+
+  Widget _buildDetailItem({
+    required IconData icon,
+    required String title,
+    required String value,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.white),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title.toUpperCase(),
+                  style: AppTextStyles.caption.copyWith(
+                    color: Colors.white.withOpacity(0.7),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: AppTextStyles.body1.copyWith(color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPassengerCount() {
     return Row(
       children: [
-        Icon(icon, color: color, size: 24),
+        const Icon(Icons.person, color: Colors.white),
         const SizedBox(width: 16),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                title,
-                style: TextStyle(
-                  fontSize: 14,
+                'PASSENGERS',
+                style: AppTextStyles.caption.copyWith(
+                  color: Colors.white.withOpacity(0.7),
                   fontWeight: FontWeight.bold,
-                  color: color,
                 ),
               ),
               const SizedBox(height: 4),
-              TextField(
-                controller: controller,
-                decoration: InputDecoration(
-                  hintText: hint,
-                  hintStyle: TextStyle(
-                    color: Colors.grey[600],
+              Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.remove, color: Colors.white),
+                    onPressed: () {
+                      if (_passengerCount > 1) {
+                        setState(() => _passengerCount--);
+                      }
+                    },
                   ),
-                  contentPadding: EdgeInsets.zero,
-                  border: InputBorder.none,
-                ),
-                style: const TextStyle(
-                  fontSize: 16,
-                  color: Colors.black87,
-                ),
+                  Text(
+                    '$_passengerCount',
+                    style: AppTextStyles.body1.copyWith(color: Colors.white),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add, color: Colors.white),
+                    onPressed: () {
+                      setState(() => _passengerCount++);
+                    },
+                  ),
+                ],
               ),
             ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTripDetail({
-    required IconData icon,
-    required String value,
-  }) {
-    return Column(
-      children: [
-        Icon(
-          icon,
-          color: Colors.white,
-          size: 24,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 16,
-            color: Colors.white,
-            fontWeight: FontWeight.w500,
           ),
         ),
       ],
